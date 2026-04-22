@@ -83,7 +83,10 @@ namespace Button {
 
         void set_idle_color(sf::Color c) { idle_color_ = c;  if (!is_hovered_) shape_.setFillColor(c); }
         void set_hover_color(sf::Color c) { hover_color_ = c; }
-
+        void set_label(const std::string& label) {
+            text_.setString(label);
+            on_position_changed();
+		}
     protected:
         bool contains(const sf::Vector2f& point) const override {
             return shape_.getGlobalBounds().contains(point);

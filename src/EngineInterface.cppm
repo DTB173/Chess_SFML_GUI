@@ -10,8 +10,12 @@ module;
 export module EngineInterface;
 
 namespace EngineInterface {
+    export struct EngineInfo {
+        int depth;
+        double nps;
+    };
 
-    export class EngineBridge {
+    export class EngineInterface {
     private:
         HANDLE hProcess_ = NULL;
         HANDLE hThread_ = NULL;
@@ -23,9 +27,11 @@ namespace EngineInterface {
 
         int currentDepth_ = 0;
         int currentEval_ = 0;
+        size_t nps_ = 0;
         std::string bestMove_;
+        std::string pvMove_;
 
-        void listenerLoop() {
+        void listener_loop() {
             char buffer[4096];
             DWORD bytesRead;
             std::string leftovers;
@@ -36,14 +42,15 @@ namespace EngineInterface {
                 size_t pos;
                 while ((pos = chunk.find('\n')) != std::string::npos) {
                     std::string line = chunk.substr(0, pos);
-                    processLine(line);
+                    process_line(line);
                     chunk.erase(0, pos + 1);
                 }
                 leftovers = chunk;
             }
         }
 
-        void processLine(const std::string& line) {
+        void process_line(const std::string& line) {
+			std::cout << "[ ENGINE ]" << line << '\n';
             std::lock_guard<std::mutex> lock(dataMutex_);
 
             if (line.starts_with("bestmove ")) {
@@ -79,9 +86,18 @@ namespace EngineInterface {
                         foundScore = true;
                     }
                 }
+                else if (token == "nps") {
+                    iss >> nps_;
+                }
+                else if (token == "pv") {
+                    std::string firstMove;
+                    if (iss >> firstMove) {
+                        pvMove_ = firstMove;
+                    }
+                }
             }
 
-            if (foundScore && (newDepth > currentDepth_ || currentDepth_ <= 0)) {
+            if (foundScore) {
                 currentDepth_ = newDepth;
                 if (isMate) {
                     currentEval_ = 30000 + scoreValue;
@@ -93,7 +109,7 @@ namespace EngineInterface {
         }
 
     public:
-        explicit EngineBridge(const std::wstring& enginePath) {
+        explicit EngineInterface(const std::wstring& enginePath) {
             SECURITY_ATTRIBUTES sa{ sizeof(sa), nullptr, TRUE };
 
             HANDLE hStdinRead{}, hStdoutWrite{};
@@ -114,7 +130,7 @@ namespace EngineInterface {
             wchar_t cmd[MAX_PATH];
             wcscpy_s(cmd, enginePath.c_str());
 
-            if (!CreateProcessW(nullptr, cmd, nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) {
+            if (!CreateProcessW(nullptr, cmd, nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
                 std::cerr << "CreateProcess failed: " << GetLastError() << std::endl;
                 return;
             }
@@ -126,35 +142,37 @@ namespace EngineInterface {
             CloseHandle(hStdinRead);
 
             isRunning_ = true;
-            listenerThread_ = std::thread(&EngineBridge::listenerLoop, this);
+            listenerThread_ = std::thread(&EngineInterface::listener_loop, this);
 
-            sendCommand("uci");
-            sendCommand("isready");
+            send_command("uci");
+            send_command("isready");
         }
 
-        ~EngineBridge() {
+        ~EngineInterface() {
             isRunning_ = false;
-
-            if (isRunning_) {
-                sendCommand("quit");
+            if (hStdinWrite_) {
+                send_command("quit");
                 CloseHandle(hStdinWrite_);
+                hStdinWrite_ = nullptr;
+            }
 
-                if (hProcess_) {
-                    if (WaitForSingleObject(hProcess_, 3000) == WAIT_TIMEOUT) {
-                        TerminateProcess(hProcess_, 1);
-                    }
-                    CloseHandle(hProcess_);
-                    CloseHandle(hThread_);
-                }
+            if (hProcess_ && WaitForSingleObject(hProcess_, 4000) == WAIT_TIMEOUT) {
+                TerminateProcess(hProcess_, 1);
             }
 
             if (listenerThread_.joinable()) {
-                CloseHandle(hStdoutRead_);
+                if (hStdoutRead_) {
+                    CloseHandle(hStdoutRead_);
+                    hStdoutRead_ = nullptr;
+                }
                 listenerThread_.join();
             }
+
+            if (hProcess_) CloseHandle(hProcess_);
+            if (hThread_)  CloseHandle(hThread_);
         }
 
-        void sendCommand(const std::string& cmd) {
+        void send_command(const std::string& cmd) {
             if (!isRunning_ || !hStdinWrite_) return;
             std::string full = cmd + "\n";
             DWORD written = 0;
@@ -162,55 +180,74 @@ namespace EngineInterface {
                 std::cerr << "Failed to send command: " << cmd << " Error: " << GetLastError() << '\n';
             }
         }
-
-        void newGame() { sendCommand("ucinewgame"); }
-        void setPositionStartpos(const std::vector<std::string>& moves = {}) {
-            std::string cmd = "position startpos";
-            if (!moves.empty()) {
-                cmd += " moves";
-                for (const auto& m : moves) cmd += " " + m;
-            }
-            sendCommand(cmd);
+        void start_thinking(const std::string& uci_position_command, int think_time_ms) {
+            send_command(uci_position_command);
+            go_movetime(think_time_ms);
+		}
+        void new_game() { 
+            std::lock_guard<std::mutex> lock(dataMutex_);
+			currentDepth_ = 0;
+			currentEval_ = 0;
+            bestMove_.clear();
+            pvMove_.clear();
+            send_command("ucinewgame"); 
+        }
+        void set_position_startpos(const std::string& uci_string) {
+            send_command(uci_string);
         }
 
-        void goDepth(int plies) { sendCommand("go depth " + std::to_string(plies)); }
-        void goMovetime(int ms) { sendCommand("go movetime " + std::to_string(ms)); }
-        void goInfinite() { sendCommand("go infinite"); }
-        void stop() { sendCommand("stop"); }
+        void go_depth(int plies) { send_command("go depth " + std::to_string(plies)); }
+        void go_movetime(int ms) { send_command("go movetime " + std::to_string(ms)); }
+        void go_infinite() { send_command("go infinite"); }
+        void stop() { 
+            send_command("stop"); 
+            {
+                std::lock_guard<std::mutex> lock(dataMutex_);
+                bestMove_ = "";
+            }
+        }
 
-        int  getDepth(){
+        int get_depth(){
             std::lock_guard<std::mutex> lock(dataMutex_);
             return currentDepth_;
         }
 
-        int  getEval(){
+        double get_nps() {
+            std::lock_guard<std::mutex> lock(dataMutex_);
+            return (double)nps_/1'000'000.0;
+        }
+
+        EngineInfo get_engine_info() {
+            std::lock_guard<std::mutex> lock(dataMutex_);
+            return { currentDepth_, (double)nps_ / 1'000'000.0 };
+        }
+        int get_eval(){
             std::lock_guard<std::mutex> lock(dataMutex_);
             return currentEval_;
         }
 
-        bool isMateScore(){
+        bool is_mate_score(){
             std::lock_guard<std::mutex> lock(dataMutex_);
             return currentEval_ >= 30000 || currentEval_ <= -30000;
         }
 
-        int  getMateInPlies(){
+        int get_mate_in_plies(){
             std::lock_guard<std::mutex> lock(dataMutex_);
             if (currentEval_ >= 30000) return currentEval_ - 30000;
             if (currentEval_ <= -30000) return -(std::abs(currentEval_) - 30000);
             return 0;
         }
 
-        std::string consumeBestMove() {
+        std::string consume_best_move() {
             std::lock_guard<std::mutex> lock(dataMutex_);
             std::string m = std::move(bestMove_);
             bestMove_.clear();
             return m;
         }
 
-        std::string peekBestMove(){
+        std::string peek_best_move(){
             std::lock_guard<std::mutex> lock(dataMutex_);
-            return bestMove_;
+            return pvMove_;
         }
     };
-
 }

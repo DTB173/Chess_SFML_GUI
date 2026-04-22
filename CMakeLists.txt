@@ -8,18 +8,22 @@ FetchContent_Declare(SFML
     GIT_TAG 3.0.0 
 )
 
-set(SFML_BUILD_AUDIO FALSE)
+set(SFML_BUILD_AUDIO TRUE)
 set(SFML_BUILD_NETWORK FALSE)
 FetchContent_MakeAvailable(SFML)
 
 add_subdirectory(src/EngineLib)
 
-add_executable(main src/main.cpp)
+add_executable(main WIN32 src/main.cpp)
 
 target_link_libraries(main 
     PRIVATE 
         EngineLib
         sfml-graphics
+        sfml-audio
+        sfml-window
+        sfml-system
+        sfml-main
 )
 
 target_sources(main
@@ -29,6 +33,8 @@ target_sources(main
             src/Button.cppm
             src/GameState.cppm
             src/EngineInterface.cppm
+            src/PlayerCard.cppm
+            src/MovePanel.cppm
 )
 
 target_compile_features(main PRIVATE cxx_std_20)
@@ -38,8 +44,8 @@ add_custom_command(TARGET main POST_BUILD
         "${CMAKE_CURRENT_SOURCE_DIR}/assets"
         "$<TARGET_FILE_DIR:main>/assets"
     COMMAND ${CMAKE_COMMAND} -E copy
-        "${CMAKE_CURRENT_SOURCE_DIR}/chess.exe" 
-        "$<TARGET_FILE_DIR:main>/engine.exe" 
+        "${CMAKE_CURRENT_SOURCE_DIR}/chess_engine.exe" 
+        "$<TARGET_FILE_DIR:main>/chess_engine.exe" 
     COMMENT "Deploying Assets and Engine to build folder..."
 )
 

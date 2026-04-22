@@ -15,6 +15,12 @@ namespace GameState {
 
 	constexpr const char* startpos = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
+    export Square square_from_notation(const char* sq) {
+        int file = sq[0] - 'a';
+        int rank = sq[1] - '1';
+        return Square::from_rf(rank, file);
+    }
+
 	export enum class GameResult {
 		Ongoing,
 		WhiteWins,
@@ -127,14 +133,38 @@ namespace GameState {
 			return pos_.turn() == Color::WHITE;
 		}
 
+        bool is_engine_turn(Types::Color user_c)const {
+            return pos_.turn() != user_c;
+        }
+
         ui64 get_possible_moves(Square from)const {
             return pos_.get_highlight_bitboard(from);
+        }
+
+        ui64 get_attackers_to_square(Square sq, Color defender_side) const {
+            return pos_.get_attacks_to(
+                sq,
+                pos_.get_total_occupancy(),
+                defender_side
+            );
+        }
+
+        ui64 get_king_attackers() const {
+            Square kingSq = pos_.get_king_square(pos_.turn());
+            return get_attackers_to_square(kingSq, pos_.turn());
+        }
+
+        Move get_last_move()const {
+            return move_history_.empty() ? Types::NO_MOVE : move_history_.back();
         }
 
         bool is_move_legal(Move m){
             return Position::is_move_legal(pos_, m);
 		}
 
+        const std::vector<Types::Move>& get_move_stack()const {
+            return move_history_;
+        }
         void undo_move() {
             if (zobrist_history_.empty()) return;
             pos_.undo_move();

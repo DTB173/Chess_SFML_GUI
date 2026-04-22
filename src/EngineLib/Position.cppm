@@ -189,6 +189,7 @@ export namespace Position {
         Flags get_metadata() const { return metadata; }
 		inline Color turn() const { return metadata.side_to_move(); }
         inline int get_phase()const { return current_phase; }
+        inline Move get_last_move()const { return (history_idx > 0 ? history[history_idx].prev_half_move : NO_MOVE); }
         inline Square get_king_square(Color c) const { 
             return king_sq[static_cast<int>(c) - 1];
         }
@@ -279,6 +280,8 @@ export namespace Position {
             occupancy[0] = occupancy[1] = 0ULL;
             total_pieces = 0ULL;
             king_sq[0] = king_sq[1] = Square::SQ_NONE;
+            history_idx = 0;
+            history.fill(StateRecord{});
 
             metadata = Flags(); // resets bits to 0xF (all castling), clears EP, white to move, clock=0
 
